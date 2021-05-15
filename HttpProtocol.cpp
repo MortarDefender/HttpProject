@@ -91,7 +91,7 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 	return variables;
 }
 
-int HttpProtocol::getStatus(std::string url, Protocol method, unordered_map<string, string> variables, std::string& body) {
+int HttpProtocol::urlParser(std::string url, Protocol method, unordered_map<string, string> variables, std::string& body) {  // TODO:
 	/* check if the url is valid and check if there has been an accident before hande */
 	// get the html file accurding to the url -> add url scheme detection
 	// TODO: add ALL methods options according to the "protocol" given
@@ -153,62 +153,130 @@ vector<std::string> HttpProtocol::split(std::string data, std::string delimiter)
 	return res;
 }
 
+string HttpProtocol::getResponse(string request, string version, int status, string parsedUrl, unordered_map<string, string> variables, Protocol method, string response_body) {
+	/* create the response according to the method requested */
+	switch (method) {
+		case Protocol::GET:
+			return this->Get(version, status, response_body);
+		case Protocol::POST:
+			return this->Post(version, status, response_body);
+		case Protocol::HEAD:
+			return this->Head(version, status);
+		case Protocol::OPTION: // TODO:
+			return this->Option();
+		case Protocol::DEL:    // TODO:
+			return this->Delete();
+		case Protocol::PUT: {
+			if (variables.find("file name") != variables.end() && variables.find("content") != variables.end())
+				return this->Put(variables.at("file name"), variables.at("content"), version, parsedUrl);
+			else // error in variabels
+				return this->Get(version, 400, ""); // 400 html content
+		}
+		case Protocol::TRACE:
+			return this->Trace(request, version, status);
+		case Protocol::Error: // error in the protocol
+			return this->Get(version, 404, ""); // 404 html content
+		default:
+			break;
+	}
+}
+
 string HttpProtocol::createMessage(string version, int status, string response_body) {
 	/* create an 'http' message using the version, status and response_body given */
 	cout << "created msg" << endl;
-	time_t current = time(0);
-	tm* timeStruct = localtime(&current);
-	
 	string code = this->errorCodes[status];
-	string month = this->month[timeStruct->tm_mon];
-	string day = this->day[timeStruct->tm_wday];
+	string optional = "";
 
 	char response[BUFFER_SIZE];
 	// the format of a 'generic' http response message
 	string format = std::string("%s %d %s\r\n") +
-					"Date: %s, %d %s %d GMT\r\n" +
-					"Content-Type: text/html; charset=UTF-8\r\n" + 
+					"%s" + // Date: %s, %d %s %d GMT\r\n
+					"Content-Type: text/html; charset=UTF-8\r\n" +
 					"Content-Length: %d\r\n" +
-					"Last-Modified: %s, %d %s %d GMT\r\n" +
+					"%s" + // Last-Modified: %s, %d %s %d GMT\r\n
 					"Server: Apache/1.3.3.7 (Unix) (Red-Hat/Linux)\r\n" + // can be removed or replaced
 					"Accept-Ranges: bytes\r\n" +
+					"%s" + // optional add ons
 					"Connection: close\r\n\r\n" +                         // can be removed
 					"%s";
-
-	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), day.c_str(), 
-		timeStruct->tm_mday, month.c_str(), 1900 + timeStruct->tm_year, response_body.size(), 
-		day.c_str(), timeStruct->tm_mday, month.c_str(), 1900 + timeStruct->tm_year, response_body.c_str());
+	// Content-Language: en
+	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), getCurrentDate("Date").c_str(), response_body.size(), getCurrentDate("Last-Modified").c_str(), optional.c_str(), response_body.c_str());
 	if (DEBUG)
 		std::cout << "response: " << response << std::endl;
 	return string(response);
 }
 
-void HttpProtocol::Get() {
+string HttpProtocol::getCurrentDate(string format) {
+	/* return the current date and time, format is the start of the returned string */
+	char res[50];
+	time_t current = time(0);
+	tm* timeStruct = localtime(&current);
+	string month = this->month[timeStruct->tm_mon];
+	string day = this->day[timeStruct->tm_wday];
+	
+	sprintf(res, "%s: %s, %d %s %d GMT\r\n", format.c_str(), day.c_str(), timeStruct->tm_mday, month.c_str(), 1900 + timeStruct->tm_year);
+	return string(res);
+}
+
+string HttpProtocol::Get(string version, int status, string response_body) {
 	/* create a GET message */
+	return this->createMessage(version, status, response_body);
 }
 
-void HttpProtocol::Post() {
+string HttpProtocol::Post(string version, int status, string response_body) {
 	/* create a POST message */
+	return this->createMessage(version, status, response_body);
 }
 
-void HttpProtocol::Head() {
+string HttpProtocol::Head(string version, int status) {
 	/* create a HEAD message */
+	return this->createMessage(version, status);
 }
 
-void HttpProtocol::Option() {
+string HttpProtocol::Option() {  // TODO:
 	/* create a OPTION message */
 }
 
-void HttpProtocol::Delete() {
+string HttpProtocol::Delete() { // TODO: # optinal: use the fileExists method in .h file
 	/* create a DELETE message */
 }
 
-void HttpProtocol::Put() {
+string HttpProtocol::Put(string fileName, string field, string version, string parsedUrl) {
 	/* create a PUT message */
+	char response[BUFFER_SIZE];
+	if (this->fileExists(fileName))
+		this->request_status = 204; // 200
+	else
+		this->request_status = 201;
+	this->createFile(fileName, field);
+
+	string code = this->errorCodes[this->request_status];
+	string format = std::string("%s %d %s\r\n") +
+					"%s" +  // Date: %s, %d %s %d GMT\r\n
+					"Content-Location: %s\r\n" + 
+					"Accept-Ranges: bytes\r\n" +
+					"Connection: close\r\n\r\n";
+
+	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), getCurrentDate("Date").c_str(), parsedUrl.c_str());
+	return string(response);
 }
 
-void HttpProtocol::Trace() {
+string HttpProtocol::Trace(string request, string version, int status) {
 	/* create a TRACE message */
+	char response[BUFFER_SIZE];
+	string code = this->errorCodes[status];
+	string format = std::string("%s %d %s\r\n") + "Content-Type: message/http\r\n" + "%s\r\n";
+
+	string user_headers = "";
+	vector<string> parts = split(request, version + "\r\n");
+	if (parts.size() != 2)
+		user_headers = parts.at(0);
+	else
+		user_headers = parts.at(1);
+
+	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), user_headers.c_str());
+	return string(response);
+
 }
 
 string HttpProtocol::handleRequest(string req) {
@@ -218,8 +286,9 @@ string HttpProtocol::handleRequest(string req) {
 	
 	cout << "\r\nstart req: " << req << endl;
 	unordered_map<string, string> variables = this->parse(req, method, url, version);
-	this->getStatus(url, method, variables, body);
-	return this->createMessage(version, this->request_status, body);
+	this->urlParser(url, method, variables, body);
+	// return this->createMessage(version, this->request_status, body);  // Deprected
+	return this->getResponse(req, version, this->request_status, url, variables, method, body);
 }
 
 string HttpProtocol::convertUp(string data) {
@@ -243,4 +312,12 @@ string HttpProtocol::getFromFile(string fileName) {
 		res += value;
 
 	return res;
+}
+
+void HttpProtocol::createFile(string fileName, string content) {
+	/* create a file with the content given */
+	// fileExists
+	ofstream myfile(fileName, ios_base::app);  // ios_base::trunc
+	myfile << content << endl;
+	myfile.close();
 }

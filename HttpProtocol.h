@@ -19,22 +19,30 @@ class HttpProtocol {
 		string month[12] = { "January" , "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
 		
 		unordered_map<string, string> parse(string data, Protocol& method, string& url, string& version);  // string& method
-		string createMessage(string version, int status, string response_body);
-		
+		string createMessage(string version, int status, string response_body = "");
+		string getResponse(string request, string version, int status, string parsedUrl, unordered_map<string, string> variables, Protocol method, string response_body="");
+		string getCurrentDate(string format);
+
 		Protocol getProtocol(std::string proc);
 		vector<std::string> split(std::string data, std::string delimiter);
 		
-		int getStatus(string url, Protocol method, unordered_map<string, string> variables, string& body); // string method
+		int urlParser(string url, Protocol method, unordered_map<string, string> variables, string& body); // string method
 		string convertUp(string data);
 		string getFromFile(string fileName);
+		void createFile(string fileName, string content);
 
-		void Get();
-		void Post();
-		void Head();
-		void Option();
-		void Delete();
-		void Put();
-		void Trace();
+		string Get(string version, int status, string response_body);
+		string Post(string version, int status, string response_body);
+		string Head(string version, int status);
+		string Option();
+		string Delete();
+		string Put(string fileName, string field, string version, string parsedUrl);
+		string Trace(string request, string version, int status);
+
+		inline bool fileExists(const std::string& name) {
+			struct stat buffer;
+			return (stat(name.c_str(), &buffer) == 0);
+		}
 
 	public:
 		HttpProtocol();

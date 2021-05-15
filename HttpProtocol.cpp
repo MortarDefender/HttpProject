@@ -235,10 +235,12 @@ string HttpProtocol::Head(string version, int status) {
 
 string HttpProtocol::Option() {  // TODO:
 	/* create a OPTION message */
+	return "";
 }
 
 string HttpProtocol::Delete() { // TODO: # optinal: use the fileExists method in .h file
 	/* create a DELETE message */
+	return "";
 }
 
 string HttpProtocol::Put(string fileName, string field, string version, string parsedUrl) {

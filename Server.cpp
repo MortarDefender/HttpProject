@@ -6,107 +6,111 @@ using namespace std;
 #include <string.h>
 #include <time.h>
 #include "Server.h"
+#include "HttpProtocol.h"
 
 
+Server::Server() : socketsCount(0), proc(new HttpProtocol()) {}
 
-// change to a local array -> or a field in a class
-struct SocketState sockets[MAX_SOCKETS] = { 0 };
-int socketsCount = 0;
-
-
-void main() {
+int Server::serverMain() {
+	/* start the server loop. return 1 if there was an exception or an error, otherwise return 0 */
 	WSAData wsaData;
 	
 	if (NO_ERROR != WSAStartup(MAKEWORD(2, 2), &wsaData)) {
 		cout << "Time Server: Error at WSAStartup()\n";
-		return;
+		return 1;
 	}
 
 	SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	
+	unsigned long flag = 1;
+	if (ioctlsocket(listenSocket, FIONBIO, &flag) != 0)
+		cout << "Time Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
+
 	if (INVALID_SOCKET == listenSocket) {
 		cout << "Time Server: Error at socket(): " << WSAGetLastError() << endl;
 		WSACleanup();
-		return;
+		return 1;
 	}
 
 	sockaddr_in serverService;
 	serverService.sin_family = AF_INET;
 	serverService.sin_addr.s_addr = INADDR_ANY;
-	serverService.sin_port = htons(TIME_PORT);
+	serverService.sin_port = htons(PORT);
 
 	if (SOCKET_ERROR == bind(listenSocket, (SOCKADDR*)&serverService, sizeof(serverService))) {
 		cout << "Time Server: Error at bind(): " << WSAGetLastError() << endl;
 		closesocket(listenSocket);
 		WSACleanup();
-		return;
+		return 1;
 	}
 
 	if (SOCKET_ERROR == listen(listenSocket, 5)) {
 		cout << "Time Server: Error at listen(): " << WSAGetLastError() << endl;
 		closesocket(listenSocket);
 		WSACleanup();
-		return;
+		return 1;
 	}
-	addSocket(listenSocket, LISTEN);
+	addSocket(listenSocket, Action::LISTEN);
 
 	while (true) {
 		fd_set waitRecv;
 		FD_ZERO(&waitRecv);
-		for (int i = 0; i < MAX_SOCKETS; i++) {
-			if ((sockets[i].recv == LISTEN) || (sockets[i].recv == RECEIVE))
-				FD_SET(sockets[i].id, &waitRecv);
-		}
 
 		fd_set waitSend;
 		FD_ZERO(&waitSend);
+
 		for (int i = 0; i < MAX_SOCKETS; i++) {
-			if (sockets[i].send == SEND)
+			if (sockets[i].action == Action::SEND)
 				FD_SET(sockets[i].id, &waitSend);
+			else if ((sockets[i].action == Action::LISTEN) || (sockets[i].action == Action::RECEIVE))
+				FD_SET(sockets[i].id, &waitRecv);
 		}
 
 		int nfd = select(0, &waitRecv, &waitSend, NULL, NULL);  // last NULL -> is timeout for when there is no actions to make
 		if (nfd == SOCKET_ERROR) {
 			cout << "Time Server: Error at select(): " << WSAGetLastError() << endl;
 			WSACleanup();
-			return;
+			return 1;
 		}
 
 		for (int i = 0; i < MAX_SOCKETS && nfd > 0; i++) {
-			if (FD_ISSET(sockets[i].id, &waitRecv)) {
+			if (FD_ISSET(sockets[i].id, &waitSend)) {
 				nfd--;
-				switch (sockets[i].recv) {
-					case LISTEN:
+				if (sockets[i].action == Action::SEND) {
+					sendMessage(i);
+					break;
+				}
+			}
+			else if (FD_ISSET(sockets[i].id, &waitRecv)) {
+				nfd--;
+				switch (sockets[i].action) {
+					case Action::LISTEN:
 						acceptConnection(i);
 						break;
 
-					case RECEIVE:
+					case Action::RECEIVE:
 						receiveMessage(i);
 						break;
-				}
-			}
-			else if (FD_ISSET(sockets[i].id, &waitSend)) {
-				nfd--;
-				if (sockets[i].send == SEND) {
-					sendMessage(i);
-					break;
 				}
 			}
 		}
 	}
 
 	// Closing connections and Winsock.
-	cout << "Time Server: Closing Connection.\n";
 	closesocket(listenSocket);
 	WSACleanup();
+	return 0;
 }
 
-bool addSocket(SOCKET id, int what) {
+bool Server::addSocket(SOCKET id, Action what) {
+	/* add socket to the array, and convert the sotcket to a non blocking */
+	unsigned long flag = 1;
+	if (ioctlsocket(id, FIONBIO, &flag) != 0)
+		cout << "Time Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
+
 	for (int i = 0; i < MAX_SOCKETS; i++) {
-		if (sockets[i].recv == EMPTY) {
+		if (sockets[i].action == Action::EMPTY) {
 			sockets[i].id = id;
-			sockets[i].recv = what;
-			sockets[i].send = IDLE;
+			sockets[i].action = what;
 			sockets[i].len = 0;
 			socketsCount++;
 			return true;
@@ -115,13 +119,14 @@ bool addSocket(SOCKET id, int what) {
 	return false;
 }
 
-void removeSocket(int index) {
-	sockets[index].recv = EMPTY;
-	sockets[index].send = EMPTY;
+void Server::removeSocket(int index) {
+	/* remove the socket with the index given */
+	sockets[index].action = Action::EMPTY;
 	socketsCount--;
 }
 
-void acceptConnection(int index) {
+void Server::acceptConnection(int index) {
+	/* accept connection with a socket -> add the socket to the array */
 	SOCKET id = sockets[index].id;
 	struct sockaddr_in from;		// Address of sending partner
 	int fromLen = sizeof(from);
@@ -131,21 +136,15 @@ void acceptConnection(int index) {
 		cout << "Time Server: Error at accept(): " << WSAGetLastError() << endl;
 		return;
 	}
-	cout << "Time Server: Client " << inet_ntoa(from.sin_addr) << ":" << ntohs(from.sin_port) << " is connected." << endl;
 
-	// Set the socket to be in non-blocking mode.
-	unsigned long flag = 1;
-	if (ioctlsocket(msgSocket, FIONBIO, &flag) != 0)
-		cout << "Time Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
-
-	if (addSocket(msgSocket, RECEIVE) == false) {
+	if (addSocket(msgSocket, Action::RECEIVE) == false) {
 		cout << "\t\tToo many connections, dropped!\n";
 		closesocket(id);
 	}
-	return;  // needed ??
 }
 
-void receiveMessage(int index) {
+void Server::receiveMessage(int index) {
+	/* revceive a message from a socket withe the index given */
 	SOCKET msgSocket = sockets[index].id;
 
 	int len = sockets[index].len;
@@ -156,64 +155,35 @@ void receiveMessage(int index) {
 			cout << "Time Server: Error at recv(): " << WSAGetLastError() << endl;
 		closesocket(msgSocket);
 		removeSocket(index);
-		return;  // needed ??
 	}
 	else {
 		sockets[index].buffer[len + bytesRecv] = '\0'; //add the null-terminating to make it a string
-		cout << "Time Server: Recieved: " << bytesRecv << " bytes of \"" << &sockets[index].buffer[len] << "\" message.\n";
-
 		sockets[index].len += bytesRecv;
 
-		// command handler -> replace according to the protocol needed (HTTP)
-		if (sockets[index].len > 0) {
-			if (strncmp(sockets[index].buffer, "TimeString", 10) == 0) {
-				sockets[index].send = SEND;
-				sockets[index].sendSubType = SEND_TIME;
-				memcpy(sockets[index].buffer, &sockets[index].buffer[10], sockets[index].len - 10);
-				sockets[index].len -= 10;
-				return;  // needed ??
-			}
-			else if (strncmp(sockets[index].buffer, "SecondsSince1970", 16) == 0) {
-				sockets[index].send = SEND;
-				sockets[index].sendSubType = SEND_SECONDS;
-				memcpy(sockets[index].buffer, &sockets[index].buffer[16], sockets[index].len - 16);
-				sockets[index].len -= 16;
-				return;  // needed ??
-			}
-			else if (strncmp(sockets[index].buffer, "Exit", 4) == 0) {
-				closesocket(msgSocket);
-				removeSocket(index);
-				return;  // needed ??
-			}
+		// command handler -> protocol HTTP
+		if (sockets[index].len > 0) {	
+			sockets[index].action = Action::SEND;
+			cout << "\r\nstart buffer: " << sockets[index].buffer << endl;
 		}
 	}
-
 }
 
-void sendMessage(int index) {
+void Server::sendMessage(int index) {
+	/* send a message to the socket with the index given */
+	cout << "send message" << endl;
 	int bytesSent = 0;
-	char sendBuff[255];
+	char sendBuff[BUFFER_SIZE];  // 255
 
-	// command handler -> replace with the needed handler class or function (HTTP)
+	// command handler -> handler class HTTP
 	SOCKET msgSocket = sockets[index].id;
-	if (sockets[index].sendSubType == SEND_TIME) {
-		time_t timer;
-		time(&timer);
-		strcpy(sendBuff, ctime(&timer));
-		sendBuff[strlen(sendBuff) - 1] = 0;
-	}
-	else if (sockets[index].sendSubType == SEND_SECONDS) {
-		time_t timer;
-		time(&timer);
-		itoa((int)timer, sendBuff, 10);
-	}
-
+	string res = proc->handleRequest(sockets[index].buffer);
+	cout << "\r\nstart res: " << res << endl;
+	strcpy(sendBuff, res.c_str());
 	bytesSent = send(msgSocket, sendBuff, (int)strlen(sendBuff), 0);
 	if (SOCKET_ERROR == bytesSent) {
 		cout << "Time Server: Error at send(): " << WSAGetLastError() << endl;
 		return;
 	}
 
-	cout << "Time Server: Sent: " << bytesSent << "\\" << strlen(sendBuff) << " bytes of \"" << sendBuff << "\" message.\n";
-	sockets[index].send = IDLE;
+	sockets[index].action = Action::IDLE;
 }

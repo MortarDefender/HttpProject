@@ -185,5 +185,5 @@ void Server::sendMessage(int index) {
 		return;
 	}
 
-	sockets[index].action = Action::IDLE;
+	removeSocket(index);  // sockets[index].action = Action::EMPTY;
 }

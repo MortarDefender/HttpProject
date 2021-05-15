@@ -179,6 +179,7 @@ string HttpProtocol::getResponse(string request, string version, int status, str
 		default:
 			break;
 	}
+	return this->Get(version, 403, ""); // 403 html content
 }
 
 string HttpProtocol::createMessage(string version, int status, string response_body) {

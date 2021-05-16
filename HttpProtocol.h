@@ -25,7 +25,9 @@ class HttpProtocol {
 
 		Protocol getProtocol(std::string proc);
 		vector<std::string> split(std::string data, std::string delimiter);
-		
+		string getDelimiter(string data, string start, string finish="");
+		string intToString(int number);
+
 		int urlParser(string url, Protocol method, unordered_map<string, string> variables, string& body); // string method
 		string convertUp(string data);
 		string getFromFile(string fileName);

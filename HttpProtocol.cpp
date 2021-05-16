@@ -13,6 +13,7 @@ HttpProtocol::HttpProtocol() : request_status(200) {
 	errorCodes[100] = "Continue";
 	errorCodes[200] = "OK";
 	errorCodes[201] = "Created";
+	errorCodes[202] = "Accepted";
 	errorCodes[204] = "No Content";
 	errorCodes[301] = "Moved Permanently";
 	errorCodes[307] = "Temporary Redirect";
@@ -53,16 +54,70 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 	}
 
 	// get the inline / date variables
-	if (method == Protocol::POST || method == Protocol::PUT) {
-		vector<string> req_parts = this->split(data, "\r\n\r\n");
-		for (unsigned int i = 1; i < req_parts.size(); i++) {
-			vector<string> variables_parts = this->split(req_parts.at(i), "=");
-			if (variables_parts.size() != 2) { // error -> there shold be only 2 parts
-				cout << "error: variables_parts size: " << variables_parts.size() << endl;
-				continue; // return;
+	if (method == Protocol::Error) { // function such as PATCH and CONNECT are not allowed
+		request_status = 501;         // Not Implemented
+		return variables;
+	}
+	else if (method == Protocol::POST) {
+		if (data.find("Content-Type: application/x-www-form-urlencoded") != string::npos) {
+			vector<string> req_parts = this->split(data, "\r\n\r\n");
+			for (unsigned int i = 1; i < req_parts.size(); i++) {
+				vector<string> variables_parts = this->split(req_parts.at(i), "=");
+				if (variables_parts.size() != 2) { // error -> there shold be only 2 parts
+					cout << "error: variables_parts size: " << variables_parts.size() << endl;
+					continue;
+				}
+				if (variables.find(variables_parts.at(0)) == variables.end())
+					variables[variables_parts.at(0)] = variables_parts.at(1);
+				else { // two or more variables with the same variable type
+					request_status = 400;         // bad request
+					return variables;
+				}
 			}
-			variables[variables_parts.at(0)] = variables_parts.at(1);
 		}
+		else if (data.find("Content-Type: multipart/form-data;") != string::npos) {
+			string req_parts = this->getDelimiter(data, "\r\n\r\n");
+			string delimiter = this->getDelimiter(data, "boundary=", "\"");
+			vector<string> variables_parts = this->split(req_parts, "--" + delimiter);
+			for (auto part : variables_parts) {
+				// string content_disposition = this->getDelimiter(part, "Content-Disposition: ", ";");
+				string var_name = this->getDelimiter(part, "name=\"", "\"");
+				string file_name = this->getDelimiter(part, "filename=\"", "\"");
+				string content = this->getDelimiter(part, "\r\n");
+				
+				// add identifiaction according to the file name given
+				variables[var_name] = content;
+			}
+		}
+		else { // The Content Type is not recognizable
+			request_status = 400;         // bad request
+			return variables;
+		}
+	}
+	else if (method == Protocol::PUT) {
+		vector<string> req_parts = this->split(data, "\r\n\r\n");
+		vector<string> url_parts = this->split(url, "\\");
+		string fileName = url_parts.at(url_parts.size() - 1);
+		if (fileName.find(".") != string::npos) {
+			if (fileName.find(".txt") != string::npos || fileName.find(".html") != string::npos)
+				variables["file name"] = fileName;
+			else { // the file wanted to update or create is not a txt or html file
+				request_status = 403;         // Forbidden
+				return variables;
+			}
+		}
+		else { // error
+			request_status = 400;         // bad request
+			return variables;
+		}
+
+		if (req_parts.size() == 2)
+			variables["content"] = req_parts.at(1);
+		else {  // error or take what you can
+			request_status = 400;         // bad request
+			return variables;
+		}
+		
 	}
 	else if (method == Protocol::GET) {
 		vector<string> url_parts = this->split(url, "?");
@@ -76,9 +131,15 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 			vector<string> vparts = this->split(part, "=");
 			if (vparts.size() != 2) { // error -> there shold be only 2 parts
 				cout << "error: variables_parts size: " << vparts.size() << endl;
-				continue; // return;
+				continue;
 			}
-			variables[vparts.at(0)] = vparts.at(1);
+			if (variables.find(vparts.at(0)) == variables.end())
+				variables[vparts.at(0)] = vparts.at(1);
+			else { // two or more variables with the same variable type
+				cout << "in two - " << vparts.at(0) << endl;
+				request_status = 400;         // bad request
+				return variables;
+			}
 		}
 	}
 
@@ -100,8 +161,17 @@ int HttpProtocol::urlParser(std::string url, Protocol method, unordered_map<stri
 		this->request_status = 404;
 		body = "";
 	}
-	else
-		body = getFromFile("index.html");
+	else {
+		switch (this->request_status) {
+			case(200):
+				body = getFromFile("index.html");
+				break;
+			default:
+				body = "<html><body style='background-color: #0575E6'><h1 style='text-align: center;'>" + intToString(this->request_status) + " - " + this->errorCodes[this->request_status] + "</h1></body</html>";
+				break;
+		}
+	}
+		// body = getFromFile("index.html");
 
 	if (variables.size() != 0)
 		cout << "user params: " << endl;
@@ -151,6 +221,43 @@ vector<std::string> HttpProtocol::split(std::string data, std::string delimiter)
 
 	res.push_back(data.substr(pos_start));
 	return res;
+}
+
+string HttpProtocol::getDelimiter(string data, string start, string finish) {  // char finish
+	/* find and retrieve the string from the end of start to the starting position of finish */
+	string res = "";
+	int start_loc = data.find(start);
+	if (start_loc == string::npos) // didnt found
+		return "";
+
+	start_loc += start.size();
+	if (finish == "") {
+		while (start_loc != data.size()) {
+			res += data.at(start_loc);
+			start_loc++;
+		}
+	}
+	else {
+		while (start_loc != data.size() && data.at(start_loc) != finish.at(0)) {
+			res += data.at(start_loc);
+			start_loc++;
+		}
+	}
+	return res;
+}
+
+string HttpProtocol::intToString(int number) {
+	string res = "", reverse_res = "";
+	int temp = number % 10;
+	number /= 10;
+	for (; number > 0; temp = number % 10, number /= 10)
+		res += temp + '0';
+	res += temp + '0';
+
+	for (int n = res.length() - 1; n >= 0; n--)
+		reverse_res.push_back(res[n]);
+
+	return reverse_res;
 }
 
 string HttpProtocol::getResponse(string request, string version, int status, string parsedUrl, unordered_map<string, string> variables, Protocol method, string response_body) {
@@ -239,7 +346,7 @@ string HttpProtocol::Option() {  // TODO:
 	return "";
 }
 
-string HttpProtocol::Delete() { // TODO: # optinal: use the fileExists method in .h file
+string HttpProtocol::Delete() {  // TODO: # optinal: use the fileExists method in .h file
 	/* create a DELETE message */
 	return "";
 }

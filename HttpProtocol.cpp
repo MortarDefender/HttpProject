@@ -117,7 +117,24 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 			request_status = 400;         // bad request
 			return variables;
 		}
-		
+	}
+	else if (method == Protocol::DEL) {
+		vector<string> req_parts = this->split(data, "\r\n\r\n");
+		vector<string> url_parts = this->split(url, "\\");
+		string fileName = url_parts.at(url_parts.size() - 1);
+		if (fileName.find(".") != string::npos) {
+			if (fileName.find(".txt") != string::npos) { // TODO: consider adding support to delete files other then text files
+				variables["file name"] = fileName.substr(1); // Eliminate the / in the file name
+			}
+			else {
+				request_status = 403;
+				return variables;
+			}
+		}
+		else {
+			request_status = 400;
+			return variables;
+		}
 	}
 	else if (method == Protocol::GET) {
 		vector<string> url_parts = this->split(url, "?");
@@ -265,24 +282,44 @@ string HttpProtocol::getResponse(string request, string version, int status, str
 	switch (method) {
 		case Protocol::GET:
 			return this->Get(version, status, response_body);
+			break;
+
 		case Protocol::POST:
 			return this->Post(version, status, response_body);
+			break;
+
 		case Protocol::HEAD:
 			return this->Head(version, status);
+			break;
+
 		case Protocol::OPTION: // TODO:
 			return this->Option();
+			break;
+
 		case Protocol::DEL:    // TODO:
-			return this->Delete();
-		case Protocol::PUT: {
+			if (variables.find("file name") != variables.end()) {
+				// Delete the file and create the response message
+				return this->Delete(variables.at("file name"), version, parsedUrl);
+			}
+			else {
+				return this->Get(version, 400, ""); // 400 html content
+			}
+			break;
+
+		case Protocol::PUT:
 			if (variables.find("file name") != variables.end() && variables.find("content") != variables.end())
 				return this->Put(variables.at("file name"), variables.at("content"), version, parsedUrl);
 			else // error in variabels
 				return this->Get(version, 400, ""); // 400 html content
-		}
+			break;
 		case Protocol::TRACE:
 			return this->Trace(request, version, status);
+			break;
+
 		case Protocol::Error: // error in the protocol
 			return this->Get(version, 404, ""); // 404 html content
+			break;
+
 		default:
 			break;
 	}
@@ -346,9 +383,36 @@ string HttpProtocol::Option() {  // TODO:
 	return "";
 }
 
-string HttpProtocol::Delete() {  // TODO: # optinal: use the fileExists method in .h file
+string HttpProtocol::Delete(string filename, string version, string parsedUrl) {
 	/* create a DELETE message */
-	return "";
+	char response[BUFFER_SIZE] = "";
+	char success[50] = "";
+	if (this->fileExists(filename)) {
+		// TODO: Add guards to not remove source code.
+		if (!remove(filename.c_str())) {
+			sprintf(success, "File deleted successfully");
+		}
+		else {
+			sprintf(success, "Error in file deletion");
+			this->request_status = 500;
+		}
+	}
+	else {
+		sprintf(success, "File does not exist");
+		this->request_status = 404;
+	}
+
+	string code = this->errorCodes[this->request_status];
+	string format = std::string("%s %d %s\r\n") +
+		"%s" +  // Date: %s, %d %s %d GMT\r\n
+		"%s\r\n" + // Delete status
+		"Content-Location: %s\r\n" +
+		"Content-Length: 0\r\n" +
+		"Accept-Ranges: bytes\r\n" +
+		"Connection: close\r\n\r\n";
+
+	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), getCurrentDate("Date").c_str(), success, parsedUrl.c_str());
+	return string(response);
 }
 
 string HttpProtocol::Put(string fileName, string field, string version, string parsedUrl) {

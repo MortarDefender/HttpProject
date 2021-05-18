@@ -37,7 +37,7 @@ class HttpProtocol {
 		string Post(string version, int status, string response_body);
 		string Head(string version, int status);
 		string Option();
-		string Delete();
+		string Delete(string filename, string version, string parsedUrl);
 		string Put(string fileName, string field, string version, string parsedUrl);
 		string Trace(string request, string version, int status);
 

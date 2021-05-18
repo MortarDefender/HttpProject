@@ -4,3 +4,5 @@ git
 *.vcxproj
 *.filters
 *.user
+/HttpProject.sln
+/.vs

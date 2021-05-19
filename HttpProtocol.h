@@ -12,7 +12,7 @@ enum class Protocol { GET, POST, HEAD, OPTION, DEL, PUT, TRACE, Error };
 class HttpProtocol {
 	private:
 		int request_status; // can be removed and given at each method as a veriable
-
+		unordered_map<string, vector<string>> allowed_methods; // Mapping to each URL a list of Allowed Methods
 		unordered_map<int, string> errorCodes;
 
 		string day[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
@@ -36,7 +36,7 @@ class HttpProtocol {
 		string Get(string version, int status, string response_body);
 		string Post(string version, int status, string response_body);
 		string Head(string version, int status);
-		string Option();
+		string Option(string version, string parsed_url);
 		string Delete(string filename, string version, string parsedUrl);
 		string Put(string fileName, string field, string version, string parsedUrl);
 		string Trace(string request, string version, int status);

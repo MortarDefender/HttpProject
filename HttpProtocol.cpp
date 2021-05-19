@@ -25,10 +25,14 @@ HttpProtocol::HttpProtocol() : request_status(200) {
 	errorCodes[500] = "Internal Server Error";
 	errorCodes[501] = "Not Implemented";
 	errorCodes[505] = "HTTP Version Not Supported";
+
+	/* Initialize allowed methods for the main site */
+	allowed_methods["*"] = { "OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE" };
 }
 
 unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& method, std::string& url, std::string& version) {
 	/* parse http request and return by refrence the method, url and version requested */
+	// TODO: Consider adding allowed methods checks, in the allowed methods dict, for each method
 	unordered_map<string, string> variables;
 	this->request_status = 200;
 	vector<string> request_lines = split(data, "\r\n");
@@ -45,7 +49,7 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 
 	// method = first_line.at(0);
 	method = getProtocol(first_line.at(0));
-	url = first_line.at(1);
+	url = first_line.at(1).substr(1); // FIXME: To eliminate the / from the url. May lead to problems. check with tamir
 	version = convertUp(first_line.at(2));
 
 	if (version != "HTTP/1.1" && version != "HTTP/1.0") {
@@ -123,8 +127,8 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 		vector<string> url_parts = this->split(url, "\\");
 		string fileName = url_parts.at(url_parts.size() - 1);
 		if (fileName.find(".") != string::npos) {
-			if (fileName.find(".txt") != string::npos) { // TODO: consider adding support to delete files other then text files
-				variables["file name"] = fileName.substr(1); // Eliminate the / in the file name
+			if (fileName.find(".txt") != string::npos) {
+				variables["file name"] = fileName;
 			}
 			else {
 				request_status = 403;
@@ -206,7 +210,7 @@ Protocol HttpProtocol::getProtocol(std::string proc) {
 		return Protocol::POST;
 	else if (proc == "HEAD")
 		return Protocol::HEAD;
-	else if (proc == "OPTION")
+	else if (proc == "OPTIONS")
 		return Protocol::OPTION;
 	else if (proc == "DELETE")
 		return Protocol::DEL;
@@ -292,11 +296,19 @@ string HttpProtocol::getResponse(string request, string version, int status, str
 			return this->Head(version, status);
 			break;
 
-		case Protocol::OPTION: // TODO:
-			return this->Option();
+		case Protocol::OPTION:
+			if (this->allowed_methods.find(parsedUrl) != this->allowed_methods.end()) {
+				if (this->allowed_methods.at(parsedUrl).at(0) == "OPTIONS")
+					return this->Option(version, parsedUrl);
+				else
+					return this->Get(version, 405, response_body);
+			}
+			else {
+				return this->Get(version, 404, ""); // File not found
+			}
 			break;
 
-		case Protocol::DEL:    // TODO:
+		case Protocol::DEL:
 			if (variables.find("file name") != variables.end()) {
 				// Delete the file and create the response message
 				return this->Delete(variables.at("file name"), version, parsedUrl);
@@ -378,9 +390,27 @@ string HttpProtocol::Head(string version, int status) {
 	return this->createMessage(version, status);
 }
 
-string HttpProtocol::Option() {  // TODO:
+string HttpProtocol::Option(string version, string parsed_url) {
 	/* create a OPTION message */
-	return "";
+	char response[BUFFER_SIZE] = "";
+
+	/* Creating a single string for all of the allowed methods */
+	string cur_options = "";
+	vector<string> options = this->allowed_methods[parsed_url];
+	for (auto option : options) {
+		cur_options += option + ", ";
+	}
+
+	string code = this->errorCodes[this->request_status];
+	string format = std::string("%s %d %s\r\n") +
+		"Allow: " + cur_options.substr(0, cur_options.size() - 2) + "\r\n" +
+		"%s" +  // Date: %s, %d %s %d GMT\r\n
+		"Content-Length: 0\r\n" +
+		"Accept-Ranges: bytes\r\n" +
+		"Connection: close\r\n\r\n";
+
+	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), getCurrentDate("Date").c_str());
+	return response;
 }
 
 string HttpProtocol::Delete(string filename, string version, string parsedUrl) {
@@ -391,6 +421,7 @@ string HttpProtocol::Delete(string filename, string version, string parsedUrl) {
 		// TODO: Add guards to not remove source code.
 		if (!remove(filename.c_str())) {
 			sprintf(success, "File deleted successfully");
+			allowed_methods.erase(filename); // Deleting the allowed methods from the deleted file
 		}
 		else {
 			sprintf(success, "Error in file deletion");
@@ -420,14 +451,17 @@ string HttpProtocol::Put(string fileName, string field, string version, string p
 	char response[BUFFER_SIZE];
 	if (this->fileExists(fileName))
 		this->request_status = 204; // 200
-	else
+	else {
 		this->request_status = 201;
+		this->allowed_methods[fileName] = { "OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE" }; // Adding the allowed methods to the file to be created
+	}
 	this->createFile(fileName, field);
 
 	string code = this->errorCodes[this->request_status];
 	string format = std::string("%s %d %s\r\n") +
 					"%s" +  // Date: %s, %d %s %d GMT\r\n
 					"Content-Location: %s\r\n" + 
+					"Content-Length: 0\r\n" +
 					"Accept-Ranges: bytes\r\n" +
 					"Connection: close\r\n\r\n";
 

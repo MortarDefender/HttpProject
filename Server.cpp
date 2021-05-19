@@ -16,17 +16,17 @@ int Server::serverMain() {
 	WSAData wsaData;
 	
 	if (NO_ERROR != WSAStartup(MAKEWORD(2, 2), &wsaData)) {
-		cout << "Time Server: Error at WSAStartup()\n";
+		cout << "Http Server: Error at WSAStartup()\n";
 		return 1;
 	}
 
 	SOCKET listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	unsigned long flag = 1;
 	if (ioctlsocket(listenSocket, FIONBIO, &flag) != 0)
-		cout << "Time Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
 
 	if (INVALID_SOCKET == listenSocket) {
-		cout << "Time Server: Error at socket(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at socket(): " << WSAGetLastError() << endl;
 		WSACleanup();
 		return 1;
 	}
@@ -37,14 +37,14 @@ int Server::serverMain() {
 	serverService.sin_port = htons(PORT);
 
 	if (SOCKET_ERROR == bind(listenSocket, (SOCKADDR*)&serverService, sizeof(serverService))) {
-		cout << "Time Server: Error at bind(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at bind(): " << WSAGetLastError() << endl;
 		closesocket(listenSocket);
 		WSACleanup();
 		return 1;
 	}
 
 	if (SOCKET_ERROR == listen(listenSocket, 5)) {
-		cout << "Time Server: Error at listen(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at listen(): " << WSAGetLastError() << endl;
 		closesocket(listenSocket);
 		WSACleanup();
 		return 1;
@@ -67,7 +67,7 @@ int Server::serverMain() {
 
 		int nfd = select(0, &waitRecv, &waitSend, NULL, NULL);  // last NULL -> is timeout for when there is no actions to make
 		if (nfd == SOCKET_ERROR) {
-			cout << "Time Server: Error at select(): " << WSAGetLastError() << endl;
+			cout << "Http Server: Error at select(): " << WSAGetLastError() << endl;
 			WSACleanup();
 			return 1;
 		}
@@ -105,7 +105,7 @@ bool Server::addSocket(SOCKET id, Action what) {
 	/* add socket to the array, and convert the sotcket to a non blocking */
 	unsigned long flag = 1;
 	if (ioctlsocket(id, FIONBIO, &flag) != 0)
-		cout << "Time Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at ioctlsocket(): " << WSAGetLastError() << endl;
 
 	for (int i = 0; i < MAX_SOCKETS; i++) {
 		if (sockets[i].action == Action::EMPTY) {
@@ -133,7 +133,7 @@ void Server::acceptConnection(int index) {
 
 	SOCKET msgSocket = accept(id, (struct sockaddr*) & from, &fromLen);
 	if (INVALID_SOCKET == msgSocket) {
-		cout << "Time Server: Error at accept(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at accept(): " << WSAGetLastError() << endl;
 		return;
 	}
 
@@ -152,7 +152,7 @@ void Server::receiveMessage(int index) {
 
 	if (SOCKET_ERROR == bytesRecv || bytesRecv == 0) {
 		if (SOCKET_ERROR == bytesRecv)
-			cout << "Time Server: Error at recv(): " << WSAGetLastError() << endl;
+			cout << "Http Server: Error at recv(): " << WSAGetLastError() << endl;
 		closesocket(msgSocket);
 		removeSocket(index);
 	}
@@ -163,25 +163,28 @@ void Server::receiveMessage(int index) {
 		// command handler -> protocol HTTP
 		if (sockets[index].len > 0) {	
 			sockets[index].action = Action::SEND;
-			cout << "\r\nstart buffer: " << sockets[index].buffer << endl;
+			if (DEBUG)
+				cout << "\r\nstart buffer: " << sockets[index].buffer << endl;
 		}
 	}
 }
 
 void Server::sendMessage(int index) {
 	/* send a message to the socket with the index given */
-	cout << "send message" << endl;
+	if (DEBUG)
+		cout << "send message" << endl;
 	int bytesSent = 0;
 	char sendBuff[BUFFER_SIZE];  // 255
 
 	// command handler -> handler class HTTP
 	SOCKET msgSocket = sockets[index].id;
 	string res = proc->handleRequest(sockets[index].buffer);
-	cout << "\r\nstart res: " << res << endl;
+	if (DEBUG)
+		cout << "\r\nstart res: " << res << endl;
 	strcpy(sendBuff, res.c_str());
 	bytesSent = send(msgSocket, sendBuff, (int)strlen(sendBuff), 0);
 	if (SOCKET_ERROR == bytesSent) {
-		cout << "Time Server: Error at send(): " << WSAGetLastError() << endl;
+		cout << "Http Server: Error at send(): " << WSAGetLastError() << endl;
 		return;
 	}
 

@@ -6,14 +6,13 @@
 // Constants
 #define PORT 27015
 #define MAX_SOCKETS 60
-// #define BUFFER_SIZE 1024
 
 enum class Action { EMPTY, LISTEN, RECEIVE, IDLE, SEND };
 
 struct SocketState {
 	SOCKET id;
 	Action action;
-	char buffer[BUFFER_SIZE];  // 128
+	char buffer[BUFFER_SIZE];
 	int len;
 };
 

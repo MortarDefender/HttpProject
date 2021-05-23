@@ -78,6 +78,26 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 unordered_map<string, string> HttpProtocol::getVariables(string data, string& url, Protocol method) {
 	/* return a map of string to string of vaeiables type to variables from the data, and method given */
 	unordered_map<string, string> variables;
+	string fileName = "";
+	if (method == Protocol::PUT || method == Protocol::DEL || 
+	   (method == Protocol::GET && (convertUp(data).find("METHOD=PUT") != string::npos || convertUp(data).find("METHOD=DELETE") != string::npos))) {
+		vector<string> url_parts = this->split(url, "/");  // ignored / for some reason
+		fileName = url_parts.at(url_parts.size() - 1);
+		if (method == Protocol::GET && fileName.find("?") != string::npos)
+			fileName = this->split(fileName, "?").at(0);
+		if (fileName.find(".") != string::npos) {
+			if (fileName.find(".txt") != string::npos)
+				variables["file name"] = fileName;
+			else { // the file wanted to update or create is not a txt file
+				request_status = 403;     // Forbidden
+				return variables;
+			}
+		}
+		else {                            // error
+			request_status = 400;         // bad request
+			return variables;
+		}
+	}
 	
 	if (method == Protocol::Error) { // function such as PATCH and CONNECT are not allowed
 		request_status = 501;        // Not Implemented
@@ -122,20 +142,6 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 	}
 	else if (method == Protocol::PUT || method == Protocol::DEL) {
 		vector<string> req_parts = this->split(data, "\r\n\r\n");
-		vector<string> url_parts = this->split(url, "/");  // ignored / for some reason
-		string fileName = url_parts.at(url_parts.size() - 1);
-		if (fileName.find(".") != string::npos) {
-			if (fileName.find(".txt") != string::npos)
-				variables["file name"] = fileName;
-			else { // the file wanted to update or create is not a txt file
-				request_status = 403;     // Forbidden
-				return variables;
-			}
-		}
-		else {                            // error
-			request_status = 400;         // bad request
-			return variables;
-		}
 		
 		if (method == Protocol::PUT) {
 			if (req_parts.size() == 2) {
@@ -168,17 +174,6 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 				variables[vparts.at(0)] = vparts.at(1);
 			else { // two or more variables with the same variable type
 				request_status = 400;   // bad request
-				return variables;
-			}
-		}
-
-		vector<string> url_parts2 = this->split(url, "/");
-		string fileName = url_parts2.at(url_parts2.size() - 1);
-		if (fileName.find(".") != string::npos) {
-			if (fileName.find(".txt") != string::npos)
-				variables["file name"] = fileName;
-			else { // the file wanted to update or create is not a txt file
-				request_status = 403;     // Forbidden
 				return variables;
 			}
 		}
@@ -357,15 +352,14 @@ string HttpProtocol::createMessage(string version, int status, string response_b
 	string format = std::string("%s %d %s\r\n") +
 					"%s" + // Date: %s, %d %s %d GMT\r\n
 					"Content-Type: text/html; charset=UTF-8\r\n" +
+					"%s" + // optional add ons
 					"Content-Length: %d\r\n" +
-					"%s" + // Last-Modified: %s, %d %s %d GMT\r\n
 					"Server: Http Server/2.0 (Windows)\r\n"
 					"Accept-Ranges: bytes\r\n" +
-					"%s" + // optional add ons
-					"Connection: close\r\n\r\n" +   // can be removed
-					"%s";
-	// Content-Language: en
-	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), getCurrentDate("Date").c_str(), response_body.size(), getCurrentDate("Last-Modified").c_str(), optional.c_str(), response_body.c_str());
+					"Connection: close\r\n\r\n" +
+					"%s";  // response body
+	// Content-Language: en // getCurrentDate("Last-Modified").c_str(), 
+	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), getCurrentDate("Date").c_str(), optional.c_str(), response_body.size(), response_body.c_str());
 	if (FULL_DEBUG)
 		std::cout << "response: " << response << std::endl;
 	return string(response);
@@ -390,17 +384,16 @@ string HttpProtocol::Get(string version, int status, string response_body) {
 
 string HttpProtocol::Post(string version, int status, string response_body) {
 	/* create a POST message */
-	return this->createMessage(version, status, response_body);
+	return this->createMessage(version, status, response_body, getCurrentDate("Last-Modified"));
 }
 
 string HttpProtocol::Head(string version, int status) {
 	/* create a HEAD message */
-	return this->createMessage(version, status);
+	return this->createMessage(version, status, "", getCurrentDate("Last-Modified"));
 }
 
 string HttpProtocol::Options(string version, string parsed_url) {
 	/* create a OPTION message */
-	char response[BUFFER_SIZE] = "";
 
 	// Creating a single string for all of the allowed methods
 	string cur_options = "";
@@ -408,53 +401,31 @@ string HttpProtocol::Options(string version, string parsed_url) {
 	for (auto option : options)
 		cur_options += option + ", ";
 
-	string code = this->errorCodes[this->request_status];
-	string format = std::string("%s %d %s\r\n") +
-					"Allow: %s\r\n" +
-					"%s" +  // Date: %s, %d %s %d GMT\r\n
-					"Content-Length: 0\r\n" +
-					"Accept-Ranges: bytes\r\n" +
-					"Connection: close\r\n\r\n";
-
-	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), cur_options.substr(0, cur_options.size() - 2).c_str(), getCurrentDate("Date").c_str());
-	return response;
+	return this->createMessage(version, this->request_status, "", "Allow: " + cur_options.substr(0, cur_options.size() - 2) + "\r\n");
 }
 
 string HttpProtocol::Delete(string filename, string version, string parsedUrl) {
 	/* create a DELETE message */
-	char success[50] = "";
-	char response[BUFFER_SIZE] = "";
+	string success = "";
 	if (this->fileExists(filename.substr(1))) {
 		if (!remove(filename.substr(1).c_str())) {
-			sprintf(success, "File deleted successfully");
+			success = "File deleted successfully";
 			this->allowed_methods.erase(filename);   // Removing the allowed methods from the deleted file
 		}
 		else {
-			sprintf(success, "Error in file deletion");
+			success = "Error in file deletion";
 			this->request_status = 500;  // server error
 		}
 	}
 	else {
-		sprintf(success, "File does not exist");
+		success = "File does not exist";
 		this->request_status = 404;      // file not found
 	}
-
-	string code = this->errorCodes[this->request_status];
-	string format = std::string("%s %d %s\r\n") +
-					"%s" +  // Date: %s, %d %s %d GMT\r\n
-					"%s\r\n" + // Delete status
-					"Content-Location: %s\r\n" +
-					"Content-Length: 0\r\n" +
-					"Accept-Ranges: bytes\r\n" +
-					"Connection: close\r\n\r\n";
-
-	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), getCurrentDate("Date").c_str(), success, parsedUrl.c_str());
-	return string(response);
+	return this->createMessage(version, this->request_status, "", success + "\r\nContent-Location: " + parsedUrl + "\r\n");
 }
 
 string HttpProtocol::Put(string fileName, string field, string version, string parsedUrl) {
 	/* create a PUT message */
-	char response[BUFFER_SIZE];
 	if (this->fileExists(fileName))
 		this->request_status = 204;  // no content
 	else {
@@ -462,40 +433,21 @@ string HttpProtocol::Put(string fileName, string field, string version, string p
 		this->allowed_methods[fileName] = { "OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE" }; // Adding the allowed methods to the file to be created
 	}
 	this->createFile(fileName, field);
-
-	string code = this->errorCodes[this->request_status];
-	string format = std::string("%s %d %s\r\n") +
-					"%s" +  // Date: %s, %d %s %d GMT\r\n
-					"Content-Location: %s\r\n" + 
-					"Content-Length: 0\r\n" +
-					"Accept-Ranges: bytes\r\n" +
-					"Connection: close\r\n\r\n";
-
-	sprintf(response, format.c_str(), version.c_str(), this->request_status, code.c_str(), getCurrentDate("Date").c_str(), parsedUrl.c_str());
-	return string(response);
+	return this->createMessage(version, this->request_status, "", "Content-Location: " + parsedUrl + "\r\n");
 }
 
 string HttpProtocol::Trace(string request, string version, int status) {
 	/* create a TRACE message */
-	char response[BUFFER_SIZE];
-	string code = this->errorCodes[status];
-	string format = std::string("%s %d %s\r\n") + 
-					"Content-Type: text/html; charset=UTF-8\r\n" +
-					"%s" +
-					"Content-Length: 0\r\n" + 
-					"Accept-Ranges: bytes\r\n" + 
-					"Connection: close\r\n\r\n";
-
 	string user_headers = "";
 	vector<string> parts = split(request, version + "\r\n");
+	if (request.find("keep-alive\r\n") != string::npos)
+		parts = split(request, "keep-alive\r\n");
 	if (parts.size() != 2)
 		user_headers = parts.at(0);
 	else
 		user_headers = parts.at(1);
 
-	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), user_headers.substr(0, user_headers.size() - 2).c_str());
-	return string(response);
-
+	return this->createMessage(version, this->request_status, "", user_headers.substr(0, user_headers.size() - 2));
 }
 
 string HttpProtocol::handleRequest(string req) {

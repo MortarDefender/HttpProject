@@ -14,6 +14,8 @@ enum class Protocol { GET, POST, HEAD, OPTIONS, DEL, PUT, TRACE, Error };
 class HttpProtocol {
 	private:
 		int request_status;
+		string error_response = "";
+		string error_extention = "";
 		unordered_map<int, string> errorCodes;
 		unordered_map<string, vector<string>> allowed_methods; // Mapping to each URL a list of Allowed Methods
 
@@ -37,7 +39,7 @@ class HttpProtocol {
 		string convertUp(string data);
 		string getFromFile(string fileName);
 		void createFile(string fileName, string content);
-		string getErrorHtml(int status);
+		string getErrorHtml(int status, string error_response, string error_extention="");
 
 		string Get(string version, int status, string response_body);
 		string Post(string version, int status, string response_body);

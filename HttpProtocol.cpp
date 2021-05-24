@@ -147,21 +147,18 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 			return variables;
 		}
 	}
-	else if (method == Protocol::PUT || method == Protocol::DEL) {
+	else if (method == Protocol::PUT) {
 		vector<string> req_parts = this->split(data, "\r\n\r\n");
-		
-		if (method == Protocol::PUT) {
-			if (req_parts.size() == 2) {
-				string content = req_parts.at(1);
-				if (content.find("content=") != string::npos)
-					content = this->getDelimiter(content, "content=");
-				variables["content"] = stringReplace(content, '+', ' ');
-			}
-			else {                      // error
-				error_response = "the requeste given is not in the right format of HTTP protocol.";  // check again if content= is requeired
-				request_status = 400;   // bad request
-				return variables;
-			}
+		if (req_parts.size() == 2) {
+			string content = req_parts.at(1);
+			if (content.find("content=") != string::npos)
+				content = this->getDelimiter(content, "content=");
+			variables["content"] = stringReplace(content, '+', ' ');
+		}
+		else {                      // error
+			error_response = "the requeste given is not in the right format of HTTP protocol.";  // check again if content= is requeired
+			request_status = 400;   // bad request
+			return variables;
 		}
 	}
 	else if (method == Protocol::GET) {
@@ -211,12 +208,12 @@ int HttpProtocol::urlParser(std::string url, Protocol& method, unordered_map<str
 	else if (method != Protocol::PUT && !this->isAllowed(url, method))
 		body = this->getErrorHtml(405, "the requested Function is not allowed on this URL = " + url);  // Method Not Allowed
 	else if (url == "/") {
-		body = getFromFile("about.html"); // index
+		body = getFromFile("index.html"); // index
 		if (variables.find("lang") != variables.end()) {
 			if (variables.at("lang") == "fr")
-				body = getFromFile("about_f.html");
+				body = getFromFile("index_f.html");
 			else if (variables.at("lang") == "hr")
-				body = getFromFile("about_h.html");
+				body = getFromFile("index_h.html");
 		}
 	}
 	else if (this->allowed_methods.find(url) != this->allowed_methods.end() && url.find('.') != string::npos)

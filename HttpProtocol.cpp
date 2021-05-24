@@ -38,13 +38,13 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 	unordered_map<string, string> variables;
 	vector<string> request_lines = split(data, "\r\n");
 	if (request_lines.size() == 0) {     // error
-		body = this->getErrorHtml(400);  // bad request
+		body = this->getErrorHtml(400, "the request given is not in the right format of an HTTP protocol request.", "there shuold be \\r\\n at the end of every line.");  // bad request
 		return variables;
 	}
 
 	vector<string> first_line = split(request_lines.at(0), " ");
 	if (first_line.size() == 0) {        // error
-		body = this->getErrorHtml(400);  // bad request
+		body = this->getErrorHtml(400, "the request given is not in the right format of an HTTP protocol request.", "the first line shold be with spaces to identify each part.");  // bad request
 		return variables;
 	}
 
@@ -53,12 +53,12 @@ unordered_map<string, string> HttpProtocol::parse(std::string data, Protocol& me
 	version = convertUp(first_line.at(2));
 
 	if (version != "HTTP/1.1" && version != "HTTP/1.0") {
-		body = this->getErrorHtml(505);  // HTTP Version Not Supported
+		body = this->getErrorHtml(505, "The Server support only version 1.0 and 1.1 of the HTTP protocol.");  // HTTP Version Not Supported
 		return variables;
 	}
 
 	if (url.size() > 100) {
-		body = this->getErrorHtml(414);  // URI Too Long
+		body = this->getErrorHtml(414, "the requested URL is too long");  // URI Too Long
 		return variables;
 	}
 
@@ -89,17 +89,21 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 			if (fileName.find(".txt") != string::npos)
 				variables["file name"] = fileName;
 			else { // the file wanted to update or create is not a txt file
+				error_response = "the requested Function can not be performed.";
 				request_status = 403;     // Forbidden
 				return variables;
 			}
 		}
 		else {                            // error
+			error_response = "the requested URL is not in the right format.";
+			error_extention = "when requesting to delete or create a new file, the file need to be specified.";
 			request_status = 400;         // bad request
 			return variables;
 		}
 	}
 	
 	if (method == Protocol::Error) { // function such as PATCH and CONNECT are not allowed
+		error_response = "the requested Function is not supported on this server.";
 		request_status = 501;        // Not Implemented
 		return variables;
 	}
@@ -116,6 +120,8 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 				if (variables.find(variables_parts.at(0)) == variables.end())
 					variables[variables_parts.at(0)] = variables_parts.at(1);
 				else { // two or more variables with the same variable type
+					error_response = "the requeste given is not in the right format of HTTP protocol.";
+					error_extention = "when using form-urlencoded the variable should be 'var name'= 'content of the variable'";
 					request_status = 400;         // bad request
 					return variables;
 				}
@@ -136,6 +142,7 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 			}
 		}
 		else { // The Content Type is not recognizable
+			error_response = "the requeste given is not in the right format of HTTP protocol.";
 			request_status = 400;         // bad request
 			return variables;
 		}
@@ -146,9 +153,12 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 		if (method == Protocol::PUT) {
 			if (req_parts.size() == 2) {
 				string content = req_parts.at(1);
-				variables["content"] = stringReplace(this->getDelimiter(content, "content="), '+', ' ');
+				if (content.find("content=") != string::npos)
+					content = this->getDelimiter(content, "content=");
+				variables["content"] = stringReplace(content, '+', ' ');
 			}
 			else {                      // error
+				error_response = "the requeste given is not in the right format of HTTP protocol.";  // check again if content= is requeired
 				request_status = 400;   // bad request
 				return variables;
 			}
@@ -156,9 +166,12 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 	}
 	else if (method == Protocol::GET) {
 		vector<string> url_parts = this->split(url, "?");
-		if (url_parts.size() != 2) {  // error
-			if (DEBUG)
-				cout << "error: url_parts size: " << url_parts.size() << endl;
+		if (url_parts.size() == 1)
+			return variables;
+		else if (url_parts.size() > 2) {  // error more than one ?
+			request_status = 400;
+			error_response = "the requeste given is not in the right format of HTTP protocol.";
+			error_extention = "there should be only one ?";
 			return variables;
 		}
 		url = url_parts.at(0);
@@ -166,6 +179,8 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 		for (auto part : variables_parts) {
 			vector<string> vparts = this->split(part, "=");
 			if (vparts.size() != 2) { // error -> there shold be only 2 parts
+				error_response = "the requeste given is not in the right format of HTTP protocol.";
+				error_extention = "the variable should be 'var name'= 'content of the variable'";
 				if (DEBUG)
 					cout << "error: variables_parts size: " << vparts.size() << endl;
 				continue;
@@ -173,6 +188,8 @@ unordered_map<string, string> HttpProtocol::getVariables(string data, string& ur
 			if (variables.find(vparts.at(0)) == variables.end())
 				variables[vparts.at(0)] = vparts.at(1);
 			else { // two or more variables with the same variable type
+				error_response = "the requeste given is not in the right format of HTTP protocol.";
+				error_extention = "there should not be two or more variables with the same variable name";
 				request_status = 400;   // bad request
 				return variables;
 			}
@@ -188,13 +205,20 @@ int HttpProtocol::urlParser(std::string url, Protocol& method, unordered_map<str
 		method = this->getProtocol(variables.at("method"));
 
 	if (this->request_status != 200 && body == "")
-		body = this->getErrorHtml(this->request_status);
+		body = this->getErrorHtml(this->request_status, this->error_response, this->error_extention);
 	else if (method != Protocol::PUT && this->allowed_methods.find(url) == this->allowed_methods.end())
-		body = this->getErrorHtml(404);
+		body = this->getErrorHtml(404, "the requested URL " + url + " was not found on this server.");  // Not Found
 	else if (method != Protocol::PUT && !this->isAllowed(url, method))
-		body = this->getErrorHtml(405);
-	else if (url == "/")
-		body = getFromFile("index.html");
+		body = this->getErrorHtml(405, "the requested Function is not allowed on this URL = " + url);  // Method Not Allowed
+	else if (url == "/") {
+		body = getFromFile("about.html"); // index
+		if (variables.find("lang") != variables.end()) {
+			if (variables.at("lang") == "fr")
+				body = getFromFile("about_f.html");
+			else if (variables.at("lang") == "hr")
+				body = getFromFile("about_h.html");
+		}
+	}
 	else if (this->allowed_methods.find(url) != this->allowed_methods.end() && url.find('.') != string::npos)
 		body = getFromFile(url.substr(1));
 
@@ -297,10 +321,13 @@ string HttpProtocol::stringReplace(string data, char old, char newC) {
 	return res;
 }
 
-string HttpProtocol::getErrorHtml(int status) {  // TODO: create a better error html
+string HttpProtocol::getErrorHtml(int status, string error_response, string error_extention) {
 	/* return a string containing the status code and the status information */
-	this->request_status = status;
-	return "<html><body style='background-color: #0575E6'><h1 style='text-align: center;'>" + intToString(status) + " - " + this->errorCodes[status] + "</h1></body</html>";
+	this->request_status = status; // update the current request status to the new status given
+	return string("<!DOCTYPE html><html><head><style> .parent{ position: absolute; top: 30%; left: 50%; transform: translate(-50%, -50%); }</style></head>") +
+		   "<body style = 'background: linear-gradient(0.25turn, #2980B9, #6DD5FA, #ffffff);'>" + 
+		   "<div class = 'parent'><h1 style='font-size: 50px; text-align: center;'>" + intToString(status) + " - " + this->errorCodes[status] + "</h1>" + 
+		   "<h1>" + error_response + "</h1><h1>" + error_extention + "</h1></div></body></html>";
 }
 
 string HttpProtocol::getResponse(string request, string version, int status, string parsedUrl, unordered_map<string, string> variables, Protocol method, string response_body) {
@@ -324,21 +351,23 @@ string HttpProtocol::getResponse(string request, string version, int status, str
 			if (variables.find("file name") != variables.end())
 				return this->Delete(variables.at("file name"), version, parsedUrl);
 			else // error in variabels
-				return this->Get(version, 400, this->getErrorHtml(400)); // Bad Request
+				return this->Get(version, 400, 
+					this->getErrorHtml(400, "the requested URL is not in the protocol format.", "there sholud be the file name needed at the end of the URL to preform the DELETE function.")); // Bad Request
 		case Protocol::PUT: {
 			if (variables.find("file name") != variables.end() && variables.find("content") != variables.end())
 				return this->Put(variables.at("file name"), variables.at("content"), version, parsedUrl);
 			else // error in variabels
-				return this->Get(version, 400, this->getErrorHtml(400)); // Bad Request
+				return this->Get(version, 400, 
+					this->getErrorHtml(400, "the requested URL is not in the protocol format.", "there sholud be the file name needed at the end of the URL to preform the PUT function.")); // Bad Request
 		}
 		case Protocol::TRACE:
 			return this->Trace(request, version, status);
 		case Protocol::Error: // error in the protocol
-			return this->Get(version, 400, this->getErrorHtml(400));     // page not found
+			return this->Get(version, 400, this->getErrorHtml(400, "the requeste is not in the protocol format."));     // page not found
 		default:
 			break;
 	}
-	return this->Get(version, 404, this->getErrorHtml(404));             // page requested not found
+	return this->Get(version, 404, this->getErrorHtml(404, "the requested URL " + parsedUrl + " was not found on this server."));             // page requested not found
 }
 
 string HttpProtocol::createMessage(string version, int status, string response_body, string optional) {
@@ -358,7 +387,7 @@ string HttpProtocol::createMessage(string version, int status, string response_b
 					"Accept-Ranges: bytes\r\n" +
 					"Connection: close\r\n\r\n" +
 					"%s";  // response body
-	// Content-Language: en // getCurrentDate("Last-Modified").c_str(), 
+	// Content-Language: en
 	sprintf(response, format.c_str(), version.c_str(), status, code.c_str(), getCurrentDate("Date").c_str(), optional.c_str(), response_body.size(), response_body.c_str());
 	if (FULL_DEBUG)
 		std::cout << "response: " << response << std::endl;
